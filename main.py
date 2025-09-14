@@ -1,5 +1,6 @@
 from fastapi import FastAPI, File, UploadFile, Body
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 from io import BytesIO
 from docx import Document
@@ -64,7 +65,7 @@ async def upload_doc(file: UploadFile = File(...)):
     }
 
 # ------------------------------
-# Chat endpoint
+# Chat endpoint (streaming)
 # ------------------------------
 @app.post("/api/chat")
 async def chat(data: ChatRequest = Body(...)):
@@ -72,18 +73,20 @@ async def chat(data: ChatRequest = Body(...)):
     Chat endpoint that uses Ollama.
     If a document is uploaded, it will be used as context.
     Otherwise, it will respond based on the user prompt only.
-    Always uses streaming mode.
+    Uses StreamingResponse for token-by-token output.
     """
     global DOCUMENT_CONTEXT, CONVERSATION_HISTORY
     user_input = data.prompt
 
     # Build messages for Ollama
-    messages = [{"role": "system", "content": "You are DeepCoder, a helpful coding assistant."}]
+    messages = [
+        {"role": "system", "content": "You are DeepCoder, a helpful coding assistant."}
+    ]
 
     if DOCUMENT_CONTEXT:
         messages.append({
-            "role": "user",
-            "content": f"Here is the document text:\n{DOCUMENT_CONTEXT}\n\nNow, answer my question based on this document."
+            "role": "system",
+            "content": f"The user has uploaded a document. Use the following text as context when answering questions:\n\n{DOCUMENT_CONTEXT}"
         })
 
     # Add conversation history
@@ -91,21 +94,18 @@ async def chat(data: ChatRequest = Body(...)):
     # Add current user prompt
     messages.append({"role": "user", "content": user_input})
 
-    try:
-        # Always streaming
-        response_stream = ollama.chat(model="deepseek-coder:6.7b", messages=messages, stream=True)
+    def generate():
         full_text = ""
-        for partial in response_stream:
-            if hasattr(partial, "message") and partial.message.content:
-                full_text += partial.message.content
+        try:
+            for partial in ollama.chat(model="deepseek-coder:6.7b", messages=messages, stream=True):
+                if hasattr(partial, "message") and partial.message.content:
+                    chunk = partial.message.content
+                    full_text += chunk
+                    yield chunk  # send chunk immediately to client
+            # Save conversation history once finished
+            CONVERSATION_HISTORY.append({"role": "user", "content": user_input})
+            CONVERSATION_HISTORY.append({"role": "assistant", "content": full_text})
+        except Exception as e:
+            yield f"⚠️ Error: {str(e)}"
 
-        assistant_reply = full_text
-
-        # Save conversation history
-        CONVERSATION_HISTORY.append({"role": "user", "content": user_input})
-        CONVERSATION_HISTORY.append({"role": "assistant", "content": assistant_reply})
-
-        return {"response": assistant_reply}
-
-    except Exception as e:
-        return {"error": str(e)}
+    return StreamingResponse(generate(), media_type="text/plain")

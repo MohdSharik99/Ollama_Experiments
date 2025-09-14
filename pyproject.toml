@@ -5,4 +5,5 @@ description = "Add your description here"
 readme = "README.md"
 requires-python = ">=3.11, <3.12"
 
-dependencies = ["ollama", "uvicorn", "python-multipart", "fastapi", "pydantic", "python-docx", "pypdf2"]
+dependencies = ["ollama", "uvicorn", "python-multipart",
+    "fastapi", "pydantic", "python-docx", "pypdf2", "streamlit", "requests", "setuptools"]
